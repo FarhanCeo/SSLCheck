@@ -1,0 +1,53 @@
+name: SSL Expiry Check
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  ssl_expiry_check:
+    runs-on: ubuntu-latest
+
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run SSL Expiry Check
+        run: |
+          #!/bin/bash
+
+          # Function to check SSL expiry for a domain
+          check_ssl_expiry() {
+            local domain=$1
+            local remaining_days
+          
+            echo "Checking SSL expiry for $domain"
+            # Use openssl to get the SSL certificate expiration date
+            if expiration_date=$(openssl s_client -servername $domain -connect $domain:443 2>/dev/null | openssl x509 -noout -dates | awk -F= '/^notAfter/ {print $2}'); then
+              # Calculate remaining days
+              remaining_days=$(( ( $(date -d "$expiration_date" +%s) - $(date +%s) ) / 86400 ))
+              # Send alert to Slack
+              curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"SSL Expiry Alert\n * Domain: $domain\n * Warning: The SSL certificate for $domain will expire in $remaining_days days.\"}" $SLACK_WEBHOOK_URL
+            else
+              echo "Error checking SSL for $domain."
+            fi
+          }
+          
+          # Read domains from the file
+          while IFS= read -r domain; do
+            check_ssl_expiry "$domain"
+          done < domains.txt
